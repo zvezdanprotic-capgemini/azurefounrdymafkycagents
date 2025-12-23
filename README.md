@@ -136,7 +136,7 @@ graph TB
 
 1. **Clone and navigate to the project**:
    ```bash
-   cd azurefoundrymcporchestration
+   cd azurefoundrymicrosoftagents
    ```
 
 2. **Create virtual environment**:
@@ -151,9 +151,8 @@ graph TB
    
    # Key dependencies include:
    # - fastapi, uvicorn: Web framework
-   # - langchain, langgraph: Agent orchestration
-   # - langchain-mcp-adapters: MCP client integration
-   # - fastmcp: MCP server framework
+   # - agent-framework: Microsoft Agent Framework orchestration
+   # - mcp, fastmcp: MCP client/server framework
    # - aiobreaker: Circuit breaker for resilience
    # - opentelemetry-*: Distributed tracing
    ```
@@ -241,7 +240,7 @@ graph TB
    ```bash
    npm run dev
    ```
-   The frontend will be available at `http://localhost:3000`
+   The frontend will be available at `http://localhost:5173`
 
 ## Usage
 
@@ -298,11 +297,11 @@ graph TB
 - `GET /mcp/servers` - List MCP server configurations
 - `GET /mcp/health` - Health status for all MCP servers (per-server monitoring)
 
-### RAG/Policy Management
-- `POST /rag/upload` - Upload policy document (PDF/Word)
-- `GET /rag/documents` - List indexed policy documents
-- `GET /rag/documents/{filename}` - Get document details
-- `DELETE /rag/documents/{filename}` - Delete policy document
+### Telemetry Endpoints
+- `GET /telemetry/recent` - Recent telemetry events (optional `session_id`)
+- `GET /telemetry/session/{session_id}` - All telemetry for a session
+- `GET /telemetry/stream/{session_id}` - Server-Sent Events stream of telemetry
+- `GET /telemetry/stats/{session_id}` - Aggregated stats (agents, tools, tokens)
 
 ## MCP Servers
 
@@ -362,24 +361,17 @@ graph TB
 ### Automated Tests
 
 ```bash
-# Run all tests (66 passing, 3 skipped)
-source venv/bin/activate
+# Activate environment and run full suite
+source myenv/bin/activate
 pytest -v
 
-# Test categories:
-pytest tests/test_main_http.py -v           # FastAPI endpoints
-pytest tests/test_agents_http.py -v         # Agent + MCP integration
-pytest tests/test_integration_http.py -v    # End-to-end workflows
-pytest tests/test_mcp_servers_http.py -v    # MCP server health checks
+# Run specific tests (examples)
+pytest -v test_agent_tool_calls.py      # Validates agent tool calls
+pytest -v test_hitl_workflow.py         # Human-in-the-loop workflow behavior
+pytest -v test_http_mcp_tools.py        # HTTP MCP tool integration
 
-# Production improvements tests (17 new tests):
-pytest tests/test_circuit_breaker.py -v     # Circuit breaker pattern (5 tests)
-pytest tests/test_health_monitoring.py -v   # Health monitoring (6 tests)
-pytest tests/test_mcp_tracing.py -v         # OpenTelemetry tracing (6 tests)
-
-# Verify tool calling
-python test_tool_binding.py                 # LLM tool call verification
-python test_http_mcp_tools.py               # Agent + MCP integration
+# Standalone checks
+python test_tool_binding.py             # LLM tool call verification
 ```
 
 ### Connection Testing
@@ -387,15 +379,11 @@ python test_http_mcp_tools.py               # Agent + MCP integration
 Verify external service connectivity before running the system:
 
 ```bash
-# Run all connection tests
-python tests/run_all_connection_tests.py
-
-# Individual tests available:
-# - test_azure_openai_connection.py
-# - test_azure_embeddings_connection.py
-# - test_postgresql_connection.py
-# - test_azure_blob_connection.py
-# - test_sendgrid_connection.py
+# Examples (run as needed):
+pytest -v tests/test_azure_openai_connection.py   # Azure OpenAI connectivity
+pytest -v tests/test_postgresql_connection.py     # PostgreSQL connectivity
+pytest -v tests/test_azure_blob_connection.py     # Azure Blob Storage connectivity
+pytest -v tests/test_sendgrid_connection.py       # SendGrid email connectivity
 ```
 
 ## Configuration
@@ -639,9 +627,9 @@ For detailed implementation information, see [PRODUCTION_IMPROVEMENTS_SUMMARY.md
 
 1. **MCP Servers Start**: 4 independent HTTP services on ports 8001-8004
 2. **Main App Starts**: Initializes HTTP MCP client, connects to all servers
-3. **MCP Client Loads Tools**: 20 tools loaded from all 4 servers via `langchain-mcp-adapters`
+3. **HTTP MCP Client Loads Tools**: Tools discovered from all servers via the HTTP MCP client
 4. **User Sends Message**: Via chat API `/chat`
-5. **LangGraph Routes**: Message to appropriate agent (e.g., IntakeAgent)
+5. **MAF Orchestration Routes**: Message to appropriate agent step (e.g., Intake)
 6. **Agent Invoked**: 
    - Inherits from `BaseKYCAgentHTTP`
    - Calls `get_mcp_client()` to get HTTP client
@@ -667,25 +655,25 @@ For detailed implementation information, see [PRODUCTION_IMPROVEMENTS_SUMMARY.md
 ## File Structure
 
 ```
-├── main_http.py                 # ✅ Main FastAPI app with MAF HITL
-├── maf_workflow_hitl.py         # ✅ MAF workflow with KYCTurnManager (Executor)
-├── maf_agents_simple.py         # ✅ 6 MAF agents with data checking
-├── maf_tools.py                 # ✅ MCP tool wrappers for MAF (@ai_function)
-├── mcp_client.py                # HTTP MCP client wrapper
-├── error_handling/
-│   ├── __init__.py              # Error classes and exports
-│   ├── middleware.py            # FastAPI error middleware
-│   ├── tracing.py               # OpenTelemetry setup
-│   └── utils.py                 # Decorators and helpers
-├── mcp_http_servers/
-│   ├── postgres_http_server.py  # Port 8001
-│   ├── blob_http_server.py      # Port 8002
-│   ├── email_http_server.py     # Port 8003
-│   └── rag_http_server.py       # Port 8004
-├── backtools.py                 # ✅ MCP tool wrappers for MAF (@ai_function)
-├── mcp_client.py                # HTTP MCP client wrapper
-├── agenmaf_agents_simple.py     # Old monolithic agents file
-│   ├── ts/                      # ✅ Modular MAF agents
+├── main_http.py                 # FastAPI app with MAF HITL + HTTP MCP client
+├── maf_workflow_hitl.py         # MAF workflow orchestration (Human-in-the-Loop)
+├── maf_tools.py                 # MCP tool wrappers for MAF (@ai_function)
+├── mcp_client.py                # HTTP MCP multi-server client
+├── telemetry_collector.py       # Telemetry to PostgreSQL + OTel enrichment
+├── docker-compose.yml           # Optional container orchestration
+├── Dockerfile                   # Backend container
+├── setup.sh                     # Environment setup helper
+├── setup_telemetry.sh           # Telemetry DB setup helper
+├── start_all_mcp_servers.sh     # Start all HTTP MCP servers
+├── start_postgres_server.sh     # Start PostgreSQL MCP server (:8001)
+├── start_blob_server.sh         # Start Blob MCP server (:8002)
+├── start_email_server.sh        # Start Email MCP server (:8003)
+├── start_rag_server.sh          # Start RAG MCP server (:8004)
+├── seed_crm_data.py             # Seed sample CRM data
+├── verify_customer_data.py      # Verify seeded data helper
+├── requirements.txt             # Python dependencies
+├── pytest.ini                   # Pytest config
+├── agents/                      # MAF agent implementations
 │   ├── __init__.py              # Agent registry (AGENT_FACTORIES, WORKFLOW_STEPS)
 │   ├── utils.py                 # Shared utilities
 │   ├── intake_agent.py          # Intake agent
@@ -695,37 +683,57 @@ For detailed implementation information, see [PRODUCTION_IMPROVEMENTS_SUMMARY.md
 │   ├── compliance_agent.py      # Compliance agent
 │   ├── action_agent.py          # Action agent
 │   └── prompts/                 # Agent instructions
-│       ├── intake_prompt.txt
-│       ├── verification_prompt.txt
-│       ├── eligibility_prompt.txt
-│       ├── recommendation_prompt.txt
-│       ├── compliance_prompt.txt
-│       └── action_prompt.txttion
-│   └── agents/                  # Old agent implementations
-├── tests/
-│   ├── test_main_http.py        # FastAPI endpoints
-│   ├── test_agents_http.py      # Agent + MCP integration
-│   ├── test_integration_http.py # End-to-end workflows
-│   ├── test_mcp_servers_http.py # MCP server health
-│   ├── test_circuit_breaker.py  # Circuit breaker tests (5)
-│   ├── test_health_monitoring.py # Health monitoring tests (6)
-│   └── test_mcp_tracing.py      # OpenTelemetry tests (6)
-├── datamodel/
+├── error_handling/              # Error handling + OpenTelemetry tracing
+│   ├── __init__.py
+│   ├── middleware.py
+│   ├── tracing.py
+│   └── utils.py
+├── mcp_http_servers/            # HTTP MCP servers (FastAPI)
+│   ├── postgres_http_server.py  # Port 8001 (CRM/telemetry data)
+│   ├── blob_http_server.py      # Port 8002 (documents)
+│   ├── email_http_server.py     # Port 8003 (notifications)
+│   └── rag_http_server.py       # Port 8004 (policies/search)
+├── datamodel/                   # SQL schemas and migrations
 │   ├── salesforce_core_schema.sql
-│   └── kyc_extensions_schema.sql
-└── frontend/                    # React + TypeScript UI
-    └── src/
-        ├── components/
-        └── services/
+│   ├── kyc_extensions_schema.sql
+│   ├── telemetry_schema.sql
+│   └── migration_add_rag_columns.sql
+├── doocumentation/              # Project docs (intentional folder name)
+│   ├── MAF_QUICKSTART.md
+│   ├── MAF_MIGRATION.md
+│   ├── HTTP_MCP_ARCHITECTURE.md
+│   ├── FRONTEND_COMPATIBILITY_FIXES.md
+│   ├── FRONTEND_TESTING_CHECKLIST.md
+│   ├── HITL_IMPLEMENTATION.md
+│   ├── TESTING.md
+│   └── VERIFICATION_AGENT_INSTRUCTIONS.md
+├── frontend/                    # React + TypeScript UI
+│   ├── Dockerfile
+│   ├── index.html
+│   ├── nginx.conf
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── vite.config.ts
+│   └── src/
+├── tests/                       # Automated tests
+│   ├── test_agent_tool_calls.py
+│   ├── test_hitl_workflow.py
+│   ├── test_http_mcp_tools.py
+│   ├── test_tool_binding.py
+│   └── test_user_inputs.sh
+├── TELEMETRY_GUIDE.md           # Telemetry usage guide
+└── TELEMETRY_QUICKSTART.md      # Telemetry quickstart
 ```
 
 ## Documentation
 
-- **[MAF_QUICKSTART.md](MAF_QUICKSTART.md)** - Complete MAF setup, HITL patterns, and agent development
-- **[MAF_MIGRATION.md](MAF_MIGRATION.md)** - Migration from Langgraph to MAF HITL
-- **[HTTP_MCP_ARCHITECTURE.md](HTTP_MCP_ARCHITECTURE.md)** - MCP server architecture and tool integration
-- **[FRONTEND_COMPATIBILITY_FIXES.md](FRONTEND_COMPATIBILITY_FIXES.md)** - Frontend integration details
-- **[FRONTEND_TESTING_CHECKLIST.md](FRONTEND_TESTING_CHECKLIST.md)** - Testing guide
+- **[MAF_QUICKSTART.md](doocumentation/MAF_QUICKSTART.md)** - Complete MAF setup, HITL patterns, and agent development
+- **[MAF_MIGRATION.md](doocumentation/MAF_MIGRATION.md)** - Migration from LangGraph to MAF HITL
+- **[HTTP_MCP_ARCHITECTURE.md](doocumentation/HTTP_MCP_ARCHITECTURE.md)** - MCP server architecture and tool integration
+- **[FRONTEND_COMPATIBILITY_FIXES.md](doocumentation/FRONTEND_COMPATIBILITY_FIXES.md)** - Frontend integration details
+- **[FRONTEND_TESTING_CHECKLIST.md](doocumentation/FRONTEND_TESTING_CHECKLIST.md)** - Testing guide
+- **[TELEMETRY_GUIDE.md](TELEMETRY_GUIDE.md)** - Telemetry events, schema, and API endpoints
+- **[TELEMETRY_QUICKSTART.md](TELEMETRY_QUICKSTART.md)** - Quick steps to enable telemetry
 
 ## Contributing
 
@@ -762,7 +770,7 @@ For issues and questions:
 
 - [Model Context Protocol](https://modelcontextprotocol.io/) - Official MCP documentation
 - [FastMCP](https://github.com/jlowin/fastmcp) - MCP SDK for Python
-- [LangGraph](https://langchain-ai.github.io/langgraph/) - Agent orchestration framework
+<!-- Removed LangGraph link: system now uses Microsoft Agent Framework (MAF) -->
 - [Azure OpenAI Service](https://learn.microsoft.com/en-us/azure/ai-services/openai/) - Azure AI documentation
 - [pgvector](https://github.com/pgvector/pgvector) - Vector similarity search for PostgreSQL
 
